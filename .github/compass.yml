@@ -1,15 +1,14 @@
 name: dev-env
-id: 'ari:cloud:compass:89436501-45fd-498f-9c7c-b0db10b968cb:component/d819e7ce-7ec1-48ae-b718-cb3459fc6e06/407347d1-1a05-4a0c-b355-17f649d8b88d'
-slug: dev-env
+id: 'ari:cloud:compass:89436501-45fd-498f-9c7c-b0db10b968cb:component/d819e7ce-7ec1-48ae-b718-cb3459fc6e06/d6984046-387b-4a95-a16c-d36a0e96769a'
+slug: oss-devnw-dev-env
 description: >-
-  This is a collection of shared files, configs, and nix-flakes for use in development. This is used by a large number of systems and should be
+  This is a collection of shared files, configs, and nix-flakes for use in
+  development. This is used by a large number of systems and should be
   treated as critical to those.
-configVersion: 1
-typeId: APPLICATION
-ownerId: 'ari:cloud:identity::team/a02a5231-1c88-4ca9-9e4b-6b818f80865d'
+ownerId: 'ari:cloud:identity::team/ed895264-a5df-48d6-9aa2-f44fe1686317'
 fields:
+  tier: 2
   lifecycle: Active
-  tier: 1
   isMonorepoProject: false
 links:
   - name: null
@@ -17,7 +16,10 @@ links:
     url: 'https://github.com/devnw/dev-env'
   - name: ''
     type: PROJECT
-    url: 'https://devnw.atlassian.net/browse/SPY'
+    url: 'https://devnw.atlassian.net/browse/DEV'
+  - name: Slack
+    type: CHAT_CHANNEL
+    url: 'https://codeprosorg.slack.com/archives/C09MCUT88MS'
 relationships: {}
 labels:
   - 'source:github'

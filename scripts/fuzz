@@ -1,0 +1,438 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Get the configuration directory from environment variable or fall back to relative path
+CONFIG_DIR="${FUZZ_CONFIG_DIR:-./shared}"
+
+# Default values
+DEFAULT_FUZZ_TIME="10"
+DEFAULT_JOBS=""
+DEFAULT_ERROR_FILE=""
+DEFAULT_CONTINUE_ON_FAILURE="false"
+DEFAULT_VERBOSE="false"
+
+# Parse command line arguments
+fuzz_time="$DEFAULT_FUZZ_TIME"
+jobs="$DEFAULT_JOBS"
+error_file="$DEFAULT_ERROR_FILE"
+continue_on_failure="$DEFAULT_CONTINUE_ON_FAILURE"
+verbose="$DEFAULT_VERBOSE"
+
+show_help() {
+    cat << EOF
+fuzz - Parallel Go Fuzz Testing with Enhanced Error Handling
+
+USAGE:
+    $0 [OPTIONS]
+
+DESCRIPTION:
+    Automatically discovers and runs Go fuzz tests in parallel for maximum efficiency.
+    Supports comprehensive error handling, progress tracking, and flexible configuration.
+
+OPTIONS:
+    -t, --time SECONDS      Fuzz time per test in seconds (default: $DEFAULT_FUZZ_TIME)
+    -j, --jobs N           Number of parallel fuzz tests (default: auto-detect, limited for efficiency)
+    -e, --error-file FILE  Write errors to file and tee to stderr simultaneously
+    -c, --continue         Continue on fuzz test failures (don't exit early)
+    -v, --verbose          Enable verbose output with detailed execution info
+    -h, --help             Show this help message
+
+EXAMPLES:
+    # Basic usage (auto-detects cores, 10s per test)
+    $0
+
+    # Development workflow (quick feedback)
+    $0 -t 5 -c
+
+    # CI/CD testing (moderate duration with error logging)
+    $0 -t 30 -c -e ci_fuzz_errors.log
+
+    # Comprehensive testing (extended duration, verbose)
+    $0 -t 120 -j 8 -v -e comprehensive_fuzz.log
+
+    # Resource-constrained systems
+    $0 -j 2 -t 15
+
+MAKEFILE INTEGRATION:
+    make fuzz               # Run fuzz tests
+    make ci-local           # Includes fuzz testing in CI checks
+
+NIX USAGE:
+    nix run .#fuzz          # Run via Nix package
+    nix develop --command ./scripts/fuzz  # Run in dev shell
+
+ENVIRONMENT VARIABLES:
+    FUZZ_CONFIG_DIR            Configuration directory (default: ./shared)
+    FUZZ_TIME                  Default fuzz time in seconds
+    FUZZ_JOBS                  Default number of parallel jobs
+    FUZZ_ERROR_FILE            Default error file path
+    FUZZ_CONTINUE_ON_FAILURE   Continue on failures (true/false)
+    FUZZ_VERBOSE               Enable verbose output (true/false)
+
+FEATURES:
+    • Automatic fuzz test discovery across all Go packages
+    • Parallel execution utilizing all available CPU cores
+    • Real-time progress reporting with job status tracking
+    • Comprehensive error logging with file output + stderr tee
+    • Configurable failure handling (stop-on-first vs continue-all)
+    • Environment variable and command-line configuration
+    • Integration with development workflow and CI/CD pipelines
+
+For detailed documentation, see: FUZZ.md
+
+EOF
+}
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -t|--time)
+            fuzz_time="$2"
+            shift 2
+            ;;
+        -j|--jobs)
+            jobs="$2"
+            shift 2
+            ;;
+        -e|--error-file)
+            error_file="$2"
+            shift 2
+            ;;
+        -c|--continue)
+            continue_on_failure="true"
+            shift
+            ;;
+        -v|--verbose)
+            verbose="true"
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use -h or --help for usage information." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Override with environment variables if set
+fuzz_time="${FUZZ_TIME:-$fuzz_time}"
+jobs="${FUZZ_JOBS:-$jobs}"
+error_file="${FUZZ_ERROR_FILE:-$error_file}"
+continue_on_failure="${FUZZ_CONTINUE_ON_FAILURE:-$continue_on_failure}"
+verbose="${FUZZ_VERBOSE:-$verbose}"
+
+# Define logging functions early
+log_verbose() {
+    if [[ "$verbose" == "true" ]]; then
+        echo "[VERBOSE] $*" >&2
+    fi
+}
+
+log_error() {
+    local msg="$*"
+    if [[ -n "$error_fd" ]]; then
+        echo "[ERROR] $msg" >&$error_fd
+    else
+        echo "[ERROR] $msg" >&2
+    fi
+}
+
+log_info() {
+    echo "[INFO] $*"
+}
+
+# Detect number of CPU cores
+if command -v nproc >/dev/null 2>&1; then
+    cores=$(nproc)
+elif [[ -r /proc/cpuinfo ]]; then
+    cores=$(grep -c "^processor" /proc/cpuinfo)
+else
+    cores=4  # fallback
+fi
+
+# Auto-detect number of parallel jobs if not specified
+if [[ -z "$jobs" ]]; then
+    # For fuzz tests, limit parallelism since each test spawns multiple workers
+    # Use fewer parallel jobs to avoid resource contention
+    if [[ $cores -gt 8 ]]; then
+        jobs=4
+    elif [[ $cores -gt 4 ]]; then
+        jobs=2
+    else
+        jobs=1
+    fi
+    
+    log_verbose "Detected $cores CPU cores, using $jobs parallel fuzz jobs"
+else
+    log_verbose "Using user-specified $jobs parallel fuzz jobs"
+fi
+
+# Validate numeric arguments
+if ! [[ "$fuzz_time" =~ ^[0-9]+$ ]] || [[ "$fuzz_time" -le 0 ]]; then
+    echo "Error: Fuzz time must be a positive integer" >&2
+    exit 1
+fi
+
+if ! [[ "$jobs" =~ ^[0-9]+$ ]] || [[ "$jobs" -le 0 ]]; then
+    echo "Error: Number of jobs must be a positive integer" >&2
+    exit 1
+fi
+
+# Setup error file handling
+error_fd=""
+if [[ -n "$error_file" ]]; then
+    # Create error file and setup file descriptor for tee
+    > "$error_file"  # truncate/create file
+    exec 3> >(tee -a "$error_file" >&2)
+    error_fd="3"
+fi
+
+# Find all fuzz test files and functions
+log_verbose "Searching for fuzz test files..."
+mapfile -t files < <(grep -r --include='*_test.go' --files-with-matches 'func Fuzz' . 2>/dev/null || true)
+
+if [[ ${#files[@]} -eq 0 ]]; then
+    log_info "No fuzz test files found"
+    exit 0
+fi
+
+log_verbose "Found ${#files[@]} fuzz test files"
+
+# Build list of all fuzz functions with their directories
+declare -a fuzz_targets=()
+for file in "${files[@]}"; do
+    mapfile -t funcs < <(grep -o 'func Fuzz\w*' "$file" | sed 's/func //')
+    parent_dir=$(dirname "$file")
+    
+    for func in "${funcs[@]}"; do
+        fuzz_targets+=("$parent_dir:$func:$file")
+        if [[ "$verbose" == "true" ]] || [[ ${#fuzz_targets[@]} -le 5 ]]; then
+            log_verbose "Found fuzz function: $func in $file"
+        fi
+    done
+done
+
+if [[ ${#fuzz_targets[@]} -eq 0 ]]; then
+    log_info "No fuzz functions found"
+    exit 0
+fi
+
+log_info "Found ${#fuzz_targets[@]} fuzz functions to test"
+log_info "Running with $jobs parallel jobs, ${fuzz_time}s per test"
+log_info "Each fuzz test will use up to $((cores / jobs)) CPU cores (GOMAXPROCS)"
+
+if [[ ${#fuzz_targets[@]} -gt 50 ]]; then
+    log_info "Large number of fuzz tests detected - this may take a while"
+    if [[ "$verbose" != "true" ]]; then
+        log_info "Consider using -v for verbose progress updates"
+    fi
+fi
+
+# Create temporary directory for job management
+temp_dir=$(mktemp -d)
+trap 'rm -rf "$temp_dir"' EXIT
+
+# Job tracking
+declare -i running_jobs=0
+declare -i completed_jobs=0
+declare -i failed_jobs=0
+declare -a job_pids=()
+
+# Function to run a single fuzz test
+run_fuzz_test() {
+    local target="$1"
+    local job_id="$2"
+    
+    IFS=':' read -r parent_dir func file <<< "$target"
+    
+    local log_file="$temp_dir/job_${job_id}.log"
+    local result_file="$temp_dir/job_${job_id}.result"
+    
+    {
+        echo "Starting fuzz test: $func in $file"
+        # Limit Go's internal parallelism to avoid excessive worker processes
+        # When running multiple fuzz tests in parallel, each should use fewer cores
+        local gomaxprocs=$((cores / jobs))
+        if [[ $gomaxprocs -lt 1 ]]; then
+            gomaxprocs=1
+        fi
+        
+        echo "Running with GOMAXPROCS=$gomaxprocs"
+        if GOMAXPROCS=$gomaxprocs go test "$parent_dir" -run="^$func$" -fuzz="^$func$" -fuzztime="${fuzz_time}s" 2>&1; then
+            echo "SUCCESS" > "$result_file"
+            echo "Completed fuzz test: $func in $file"
+        else
+            echo "FAILED" > "$result_file"
+            echo "Failed fuzz test: $func in $file"
+        fi
+    } > "$log_file" 2>&1
+}
+
+# Function to start a job
+start_job() {
+    local target="$1"
+    local job_id="$2"
+    
+    run_fuzz_test "$target" "$job_id" &
+    local pid=$!
+    job_pids[$job_id]=$pid
+    ((running_jobs++))
+    
+    log_verbose "Started job $job_id (PID: $pid) for target: $target"
+}
+
+# Function to wait for any job to complete
+wait_for_job() {
+    local completed_pid
+    local completed_job_id=""
+    
+    # Wait for any background job to complete
+    wait -n
+    local wait_status=$?
+    
+    # Find which job completed by checking which PIDs are no longer running
+    for job_id in "${!job_pids[@]}"; do
+        local pid=${job_pids[$job_id]}
+        if ! kill -0 "$pid" 2>/dev/null; then
+            completed_job_id=$job_id
+            completed_pid=$pid
+            log_verbose "Job $job_id (PID: $pid) completed with status $wait_status"
+            break
+        fi
+    done
+    
+    # If we couldn't find a completed job, check if any jobs are still running
+    if [[ -z "$completed_job_id" ]]; then
+        log_verbose "Could not identify specific completed job, checking all jobs..."
+        local any_running=false
+        for job_id in "${!job_pids[@]}"; do
+            local pid=${job_pids[$job_id]}
+            if kill -0 "$pid" 2>/dev/null; then
+                any_running=true
+            else
+                # Found a dead job
+                completed_job_id=$job_id
+                completed_pid=$pid
+                log_verbose "Found completed job $job_id (PID: $pid) via fallback check"
+                break
+            fi
+        done
+        
+        if [[ -z "$completed_job_id" ]]; then
+            if [[ "$any_running" == "false" ]]; then
+                log_error "No jobs running, but no completed job found - possible race condition"
+                # Clear all job tracking to avoid infinite loop
+                job_pids=()
+                running_jobs=0
+                return 1
+            else
+                log_error "Jobs still running but wait failed - retrying"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Process completed job
+    local log_file="$temp_dir/job_${completed_job_id}.log"
+    local result_file="$temp_dir/job_${completed_job_id}.result"
+    
+    # Output the log
+    if [[ -f "$log_file" ]]; then
+        cat "$log_file"
+    fi
+    
+    # Check result
+    if [[ -f "$result_file" ]]; then
+        local result=$(cat "$result_file")
+        if [[ "$result" == "SUCCESS" ]]; then
+            log_verbose "Job $completed_job_id completed successfully"
+        else
+            ((failed_jobs++))
+            log_error "Job $completed_job_id failed"
+            
+            # If not continuing on failure, kill all running jobs and exit
+            if [[ "$continue_on_failure" != "true" ]]; then
+                log_error "Stopping all jobs due to failure (use -c to continue on failures)"
+                for pid in "${job_pids[@]}"; do
+                    if kill -0 "$pid" 2>/dev/null; then
+                        kill "$pid" 2>/dev/null || true
+                    fi
+                done
+                wait  # Wait for all jobs to terminate
+                exit 1
+            fi
+        fi
+    fi
+    
+    # Clean up completed job
+    unset job_pids[$completed_job_id]
+    ((running_jobs--))
+    ((completed_jobs++))
+    
+    log_info "Progress: $completed_jobs/${#fuzz_targets[@]} completed, $failed_jobs failed, $running_jobs running"
+}
+
+# Main execution loop
+job_id=0
+target_index=0
+
+while [[ $target_index -lt ${#fuzz_targets[@]} ]] || [[ $running_jobs -gt 0 ]]; do
+    # Start new jobs if we have targets and available slots
+    while [[ $running_jobs -lt $jobs ]] && [[ $target_index -lt ${#fuzz_targets[@]} ]]; do
+        log_verbose "Starting job $job_id for target $target_index: ${fuzz_targets[$target_index]}"
+        start_job "${fuzz_targets[$target_index]}" "$job_id"
+        ((target_index++))
+        ((job_id++))
+    done
+    
+    # Wait for at least one job to complete if we have running jobs
+    if [[ $running_jobs -gt 0 ]]; then
+        log_verbose "Waiting for job completion (running: $running_jobs, completed: $completed_jobs, remaining: $((${#fuzz_targets[@]} - target_index)))"
+        if ! wait_for_job; then
+            log_error "Job wait failed, checking if we can continue"
+            # If we have no running jobs but think we do, fix the state
+            local actual_running=0
+            for job_id in "${!job_pids[@]}"; do
+                local pid=${job_pids[$job_id]}
+                if kill -0 "$pid" 2>/dev/null; then
+                    ((actual_running++))
+                else
+                    # Clean up dead job
+                    unset job_pids[$job_id]
+                fi
+            done
+            running_jobs=$actual_running
+            log_verbose "Corrected running job count to $running_jobs"
+        fi
+    fi
+done
+
+log_verbose "Main loop completed. Final stats: running=$running_jobs, completed=$completed_jobs, target_index=$target_index, total_targets=${#fuzz_targets[@]}"
+
+# Close error file descriptor if it was opened
+if [[ -n "$error_fd" ]]; then
+    exec 3>&-
+fi
+
+# Final summary
+log_info "Fuzzing completed: $completed_jobs total, $failed_jobs failed"
+
+if [[ $failed_jobs -gt 0 ]]; then
+    if [[ -n "$error_file" ]]; then
+        log_error "Errors have been logged to: $error_file"
+    fi
+    
+    if [[ "$continue_on_failure" == "true" ]]; then
+        log_info "Some tests failed, but continuing as requested"
+        exit 0
+    else
+        exit 1
+    fi
+fi
+
+log_info "All fuzz tests completed successfully"

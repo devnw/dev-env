@@ -1,0 +1,32 @@
+# golangci-lint-langserver configuration
+# This configures the language server to use the same settings as the lint script
+
+# Point to the same configuration file used by the lint script
+golangci-lint-config: ".golangci.yml"
+
+# Enable auto-fix on save (if supported by your editor)
+auto-fix: true
+
+# Enable diagnostics
+diagnostics: true
+
+# Cache settings for better performance
+cache:
+  enabled: true
+  
+# Logging level
+log-level: "info"
+
+# Additional language server settings
+langserver:
+  # Automatically run golangci-lint on file save
+  on-save: true
+  
+  # Run diagnostics on file change
+  on-change: true
+  
+  # Maximum number of diagnostics to show
+  max-diagnostics: 100
+  
+  # Timeout for running linters (in seconds)
+  timeout: 30

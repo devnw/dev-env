@@ -1,0 +1,20 @@
+// Copyright (c) 2024 by SPYDER.
+//
+// This software is proprietary information of SPYDER.
+// Unauthorized use, copying, modification, distribution, and/or
+// disclosure is strictly prohibited, except as provided under the terms
+// of the commercial license agreement you have entered into with
+// SPYDER.
+//
+// For more details, see the LICENSE file in the root directory of this
+// source code repository or contact SPYDER at info@devnw.com.
+
+package main
+
+func add(a, b int) int {
+	return a + b
+}
+
+func main() {
+	_ = add(1, 2)
+}

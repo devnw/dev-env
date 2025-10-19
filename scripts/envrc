@@ -1,0 +1,42 @@
+source_up
+export VAULT_ADDR=https://pki.devnw.com
+export NIXPKGS_ALLOW_UNFREE=1
+export FLAKE_PATH=.#
+export FLAKE_ARGS='--impure --accept-flake-config'
+
+# check if github CLI is installed
+if [ -x "$(command -v gh)" ]; then
+    echo "GitHub CLI is installed, proceeding with authentication..."
+    export GITHUB_TOKEN=$(gh auth token)
+else
+    echo "GitHub CLI is not installed, skipping GitHub authentication"
+    echo "Please install GitHub CLI and try again."
+    echo "https://cli.github.com/"
+    exit 1
+fi
+
+vault login -no-print -method=github token=$GITHUB_TOKEN
+export OPENAI_API_KEY="$(vault kv get -mount=secret -field=token /dev/openai/actions-primary)"
+export CACHIX_AUTH_TOKEN="$(vault kv get -mount=secret -field=token /cicd/gh/cachix)"
+
+# check for nix
+if [ -x "$(command -v nix)" ]; then
+    echo "Nix is installed, proceeding with Nix configuration..."
+else
+    echo "Nix is not installed, skipping Nix configuration"
+    echo "Please install Nix and try again."
+    echo "bash <(curl -L https://nixos.org/nix/install)"
+    exit 1
+fi
+
+export NIX_CONFIG="experimental-features = nix-command flakes
+        access-tokens = github.com=${GITHUB_TOKEN}"
+
+# check for cachix
+if [ -x "$(command -v cachix)" ]; then
+    echo "Cachix is installed, proceeding with Cachix configuration..."
+    cachix use oss-devnw 
+else
+    nix-env -iA cachix -f https://cachix.org/api/v1/install
+fi
+use flake $FLAKE_PATH $FLAKE_ARGS

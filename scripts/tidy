@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Get the configuration directory from environment variable or fall back to relative path
+CONFIG_DIR="${TIDY_CONFIG_DIR:-./shared}"
+
+# if go is installed, run go mod tidy
+if [ -x "$(command -v go)" ]; then
+	if [ -f "go.mod" ]; then
+		echo "Running go mod tidy..."
+		go mod tidy
+	else
+		echo "go.mod not found, skipping go mod tidy"
+	fi
+else
+	echo "Go is not installed, skipping go mod tidy"
+fi
+
+# if gomod2nix is installed, run gomod2nix
+if [ -x "$(command -v gomod2nix)" ]; then
+	if [ -f "go.mod" ]; then
+		echo "Running gomod2nix..."
+		gomod2nix generate
+	else
+		echo "go.mod not found, skipping gomod2nix"
+	fi
+else
+	echo "gomod2nix is not installed, skipping gomod2nix"
+fi

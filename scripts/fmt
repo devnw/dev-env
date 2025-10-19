@@ -1,0 +1,884 @@
+#!/usr/bin/env bash
+#
+# Enhanced multi-language code formatting tool with selective execution and comprehensive configuration.
+#
+# Supports: Go, JavaScript/TypeScript, Python, Shell, Nix, Zig, SQL, JSON, YAML, TOML, Rust
+# Features: File discovery, selective formatter control, configuration management, help system
+#
+
+set -euo pipefail
+
+# Default configuration
+DEFAULT_CONFIG_DIR="./shared"
+DEFAULT_VERBOSE="false"
+DEFAULT_DRY_RUN="false"
+DEFAULT_CONTINUE_ON_ERROR="true"
+DEFAULT_CHECK_ONLY="false"
+
+# Get configuration from environment or defaults
+CONFIG_DIR="${FMT_CONFIG_DIR:-$DEFAULT_CONFIG_DIR}"
+VERBOSE="${FMT_VERBOSE:-$DEFAULT_VERBOSE}"
+DRY_RUN="${FMT_DRY_RUN:-$DEFAULT_DRY_RUN}"
+CONTINUE_ON_ERROR="${FMT_CONTINUE_ON_ERROR:-$DEFAULT_CONTINUE_ON_ERROR}"
+CHECK_ONLY="${FMT_CHECK_ONLY:-$DEFAULT_CHECK_ONLY}"
+
+# Formatter control variables (can be set via environment or command line)
+ENABLE_GO="${FMT_ENABLE_GO:-true}"
+ENABLE_JS_TS="${FMT_ENABLE_JS_TS:-true}"
+ENABLE_PYTHON="${FMT_ENABLE_PYTHON:-true}"
+ENABLE_ISORT="${FMT_ENABLE_ISORT:-true}"
+ENABLE_SHELL="${FMT_ENABLE_SHELL:-true}"
+ENABLE_NIX="${FMT_ENABLE_NIX:-true}"
+ENABLE_ZIG="${FMT_ENABLE_ZIG:-true}"
+ENABLE_RUST="${FMT_ENABLE_RUST:-true}"
+ENABLE_SQL="${FMT_ENABLE_SQL:-true}"
+ENABLE_JSON="${FMT_ENABLE_JSON:-true}"
+ENABLE_YAML="${FMT_ENABLE_YAML:-true}"
+ENABLE_TOML="${FMT_ENABLE_TOML:-true}"
+ENABLE_PRETTIER="${FMT_ENABLE_PRETTIER:-true}"
+
+# File discovery variables
+TARGET_FILES=()
+FOUND_GO_FILES=()
+FOUND_JS_TS_FILES=()
+FOUND_PYTHON_FILES=()
+FOUND_SHELL_FILES=()
+FOUND_NIX_FILES=()
+FOUND_ZIG_FILES=()
+FOUND_RUST_FILES=()
+FOUND_SQL_FILES=()
+FOUND_YAML_FILES=()
+FOUND_JSON_FILES=()
+FOUND_TOML_FILES=()
+
+# Statistics
+RUN_COUNT=0
+SUCCESS_COUNT=0
+ERROR_COUNT=0
+SKIP_COUNT=0
+
+show_help() {
+    cat << 'EOF'
+fmt - Enhanced Multi-Language Code Formatting Tool
+
+USAGE:
+    fmt [OPTIONS] [files...]
+
+DESCRIPTION:
+    Comprehensive code formatting tool that automatically discovers and formats source files
+    across multiple languages with configurable execution and detailed reporting.
+
+OPTIONS:
+    -h, --help              Show this help message
+    -v, --verbose           Enable verbose output with detailed execution info
+    -n, --dry-run           Show what would be formatted without executing
+    -c, --continue          Continue on errors (default: true)
+    -s, --stop-on-error     Stop on first error (opposite of --continue)
+    --check                 Check if files are formatted without modifying them
+    
+    --config-dir DIR        Configuration directory (default: ./shared)
+    
+FORMATTER CONTROL:
+    --disable-all           Disable all formatters (use with specific --enable-*)
+    --disable-go            Disable Go formatting
+    --disable-js-ts         Disable JavaScript/TypeScript formatting
+    --disable-python        Disable Python formatting (black)
+    --disable-isort         Disable Python import sorting
+    --disable-shell         Disable shell script formatting
+    --disable-nix           Disable Nix file formatting
+    --disable-zig           Disable Zig formatting
+    --disable-rust          Disable Rust formatting
+    --disable-sql           Disable SQL formatting
+    --disable-json          Disable JSON formatting
+    --disable-yaml          Disable YAML formatting
+    --disable-toml          Disable TOML formatting
+    --disable-prettier      Disable Prettier formatting
+    
+    --enable-go             Enable Go formatting
+    --enable-js-ts          Enable JavaScript/TypeScript formatting
+    --enable-python         Enable Python formatting (black)
+    --enable-isort          Enable Python import sorting
+    --enable-shell          Enable shell script formatting
+    --enable-nix            Enable Nix file formatting
+    --enable-zig            Enable Zig formatting
+    --enable-rust           Enable Rust formatting
+    --enable-sql            Enable SQL formatting
+    --enable-json           Enable JSON formatting
+    --enable-yaml           Enable YAML formatting
+    --enable-toml           Enable TOML formatting
+    --enable-prettier       Enable Prettier formatting
+
+EXAMPLES:
+    # Format all discovered files
+    fmt
+    
+    # Verbose output with dry run
+    fmt -v -n
+    
+    # Only format specific files
+    fmt src/main.go src/utils.py
+    
+    # Check formatting without changing files
+    fmt --check
+    
+    # Disable Python formatters, enable only Go
+    fmt --disable-python --disable-isort
+    
+    # Quick Go-only formatting
+    fmt --disable-all --enable-go
+    
+    # Custom configuration
+    fmt --config-dir ./custom-config
+
+FILE DISCOVERY:
+    The tool automatically discovers files in the current directory and subdirectories:
+    - Go: *.go files (requires go.mod)
+    - JavaScript/TypeScript: *.js, *.jsx, *.ts, *.tsx
+    - Python: *.py files
+    - Shell: *.sh files
+    - Nix: *.nix files
+    - Zig: *.zig files
+    - Rust: *.rs files
+    - SQL: *.sql files
+    - YAML: *.yml, *.yaml files
+    - JSON: *.json files
+    - TOML: *.toml files
+
+ENVIRONMENT VARIABLES:
+    FMT_CONFIG_DIR              Configuration directory
+    FMT_VERBOSE                 Enable verbose output (true/false)
+    FMT_DRY_RUN                 Enable dry run mode (true/false)
+    FMT_CONTINUE_ON_ERROR       Continue on errors (true/false)
+    FMT_CHECK_ONLY              Check mode (true/false)
+    FMT_ENABLE_*                Enable specific formatters (true/false)
+
+CONFIGURATION FILES:
+    The tool looks for configuration files in the config directory:
+    - .prettierrc.yaml           Code formatting configuration
+    - .golangci.yml              Go linting configuration (for golangci-lint --fix)
+    - pyproject.toml             Python formatting configuration
+    - rustfmt.toml              Rust formatting configuration
+
+EXIT CODES:
+    0    All enabled formatters completed successfully
+    1    One or more formatters found issues or failed
+    2    Invalid command line arguments
+    3    Required tools not found
+
+EOF
+}
+
+log_verbose() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo "[VERBOSE] $*" >&2
+    fi
+}
+
+log_info() {
+    echo "[INFO] $*"
+}
+
+log_warn() {
+    echo "[WARN] $*" >&2
+}
+
+log_error() {
+    echo "[ERROR] $*" >&2
+}
+
+log_dry_run() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY-RUN] Would execute: $*"
+        return 0
+    fi
+    return 1
+}
+
+execute_formatter() {
+    local name="$1"
+    local cmd="$2"
+    
+    ((RUN_COUNT++))
+    
+    if log_dry_run "$name: $cmd"; then
+        ((SUCCESS_COUNT++))
+        return 0
+    fi
+    
+    log_verbose "Executing $name: $cmd"
+    
+    if eval "$cmd"; then
+        log_verbose "$name completed successfully"
+        ((SUCCESS_COUNT++))
+        return 0
+    else
+        local exit_code=$?
+        log_error "$name failed with exit code $exit_code"
+        ((ERROR_COUNT++))
+        
+        if [[ "$CONTINUE_ON_ERROR" != "true" ]]; then
+            log_error "Stopping due to error (use --continue to continue on errors)"
+            exit 1
+        fi
+        return $exit_code
+    fi
+}
+
+skip_formatter() {
+    local name="$1"
+    local reason="$2"
+    
+    log_verbose "Skipping $name: $reason"
+    ((SKIP_COUNT++))
+}
+
+discover_files() {
+    log_verbose "Discovering files in current directory and subdirectories..."
+    
+    # Clear arrays
+    FOUND_GO_FILES=()
+    FOUND_JS_TS_FILES=()
+    FOUND_PYTHON_FILES=()
+    FOUND_SHELL_FILES=()
+    FOUND_NIX_FILES=()
+    FOUND_ZIG_FILES=()
+    FOUND_RUST_FILES=()
+    FOUND_SQL_FILES=()
+    FOUND_YAML_FILES=()
+    FOUND_JSON_FILES=()
+    FOUND_TOML_FILES=()
+    
+    # Discover Go files (only if go.mod exists)
+    if [[ -f "go.mod" ]]; then
+        while IFS= read -r -d '' file; do
+            FOUND_GO_FILES+=("$file")
+        done < <(find . -name "*.go" -type f -not -path "*/vendor/*" -not -path "*/.git/*" -print0)
+    fi
+    
+    # Discover JavaScript/TypeScript files
+    while IFS= read -r -d '' file; do
+        FOUND_JS_TS_FILES+=("$file")
+    done < <(find . \( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" \) -type f -not -path "*/node_modules/*" -not -path "*/.git/*" -print0)
+    
+    # Discover Python files
+    while IFS= read -r -d '' file; do
+        FOUND_PYTHON_FILES+=("$file")
+    done < <(find . -name "*.py" -type f -not -path "*/__pycache__/*" -not -path "*/.git/*" -print0)
+    
+    # Discover Shell files
+    while IFS= read -r -d '' file; do
+        FOUND_SHELL_FILES+=("$file")
+    done < <(find . -name "*.sh" -type f -not -path "*/.git/*" -print0)
+    
+    # Discover Nix files
+    while IFS= read -r -d '' file; do
+        FOUND_NIX_FILES+=("$file")
+    done < <(find . -name "*.nix" -type f -not -path "*/.git/*" -print0)
+    
+    # Discover Zig files
+    while IFS= read -r -d '' file; do
+        FOUND_ZIG_FILES+=("$file")
+    done < <(find . -name "*.zig" -type f -not -path "*/.git/*" -print0)
+    
+    # Discover Rust files
+    while IFS= read -r -d '' file; do
+        FOUND_RUST_FILES+=("$file")
+    done < <(find . -name "*.rs" -type f -not -path "*/target/*" -not -path "*/.git/*" -print0)
+    
+    # Discover SQL files
+    while IFS= read -r -d '' file; do
+        FOUND_SQL_FILES+=("$file")
+    done < <(find . -name "*.sql" -type f -not -path "*/.git/*" -print0)
+    
+    # Discover YAML files
+    while IFS= read -r -d '' file; do
+        FOUND_YAML_FILES+=("$file")
+    done < <(find . \( -name "*.yml" -o -name "*.yaml" \) -type f -not -path "*/.git/*" -print0)
+    
+    # Discover JSON files
+    while IFS= read -r -d '' file; do
+        FOUND_JSON_FILES+=("$file")
+    done < <(find . -name "*.json" -type f -not -path "*/node_modules/*" -not -path "*/.git/*" -print0)
+    
+    # Discover TOML files
+    while IFS= read -r -d '' file; do
+        FOUND_TOML_FILES+=("$file")
+    done < <(find . -name "*.toml" -type f -not -path "*/.git/*" -print0)
+    
+    log_verbose "File discovery complete:"
+    log_verbose "  Go files: ${#FOUND_GO_FILES[@]}"
+    log_verbose "  JS/TS files: ${#FOUND_JS_TS_FILES[@]}"
+    log_verbose "  Python files: ${#FOUND_PYTHON_FILES[@]}"
+    log_verbose "  Shell files: ${#FOUND_SHELL_FILES[@]}"
+    log_verbose "  Nix files: ${#FOUND_NIX_FILES[@]}"
+    log_verbose "  Zig files: ${#FOUND_ZIG_FILES[@]}"
+    log_verbose "  Rust files: ${#FOUND_RUST_FILES[@]}"
+    log_verbose "  SQL files: ${#FOUND_SQL_FILES[@]}"
+    log_verbose "  YAML files: ${#FOUND_YAML_FILES[@]}"
+    log_verbose "  JSON files: ${#FOUND_JSON_FILES[@]}"
+    log_verbose "  TOML files: ${#FOUND_TOML_FILES[@]}"
+}
+
+filter_target_files() {
+    if [[ ${#TARGET_FILES[@]} -eq 0 ]]; then
+        return 0  # No filtering needed
+    fi
+    
+    log_verbose "Filtering discovered files based on target list..."
+    
+    # Filter each array to only include target files
+    local filtered_go=()
+    local filtered_js_ts=()
+    local filtered_python=()
+    local filtered_shell=()
+    local filtered_nix=()
+    local filtered_zig=()
+    local filtered_rust=()
+    local filtered_sql=()
+    local filtered_yaml=()
+    local filtered_json=()
+    local filtered_toml=()
+    
+    # Helper function to check if file is in target list
+    is_target_file() {
+        local file="$1"
+        local target
+        for target in "${TARGET_FILES[@]}"; do
+            if [[ "$file" == "$target" ]] || [[ "$(realpath "$file" 2>/dev/null || echo "$file")" == "$(realpath "$target" 2>/dev/null || echo "$target")" ]]; then
+                return 0
+            fi
+        done
+        return 1
+    }
+    
+    # Filter arrays
+    for file in "${FOUND_GO_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_go+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_JS_TS_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_js_ts+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_PYTHON_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_python+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_SHELL_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_shell+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_NIX_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_nix+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_ZIG_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_zig+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_RUST_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_rust+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_SQL_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_sql+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_YAML_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_yaml+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_JSON_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_json+=("$file")
+        fi
+    done
+    
+    for file in "${FOUND_TOML_FILES[@]}"; do
+        if is_target_file "$file"; then
+            filtered_toml+=("$file")
+        fi
+    done
+    
+    # Update arrays
+    FOUND_GO_FILES=("${filtered_go[@]}")
+    FOUND_JS_TS_FILES=("${filtered_js_ts[@]}")
+    FOUND_PYTHON_FILES=("${filtered_python[@]}")
+    FOUND_SHELL_FILES=("${filtered_shell[@]}")
+    FOUND_NIX_FILES=("${filtered_nix[@]}")
+    FOUND_ZIG_FILES=("${filtered_zig[@]}")
+    FOUND_RUST_FILES=("${filtered_rust[@]}")
+    FOUND_SQL_FILES=("${filtered_sql[@]}")
+    FOUND_YAML_FILES=("${filtered_yaml[@]}")
+    FOUND_JSON_FILES=("${filtered_json[@]}")
+    FOUND_TOML_FILES=("${filtered_toml[@]}")
+    
+    log_verbose "Filtered file counts:"
+    log_verbose "  Go files: ${#FOUND_GO_FILES[@]}"
+    log_verbose "  JS/TS files: ${#FOUND_JS_TS_FILES[@]}"
+    log_verbose "  Python files: ${#FOUND_PYTHON_FILES[@]}"
+    log_verbose "  Shell files: ${#FOUND_SHELL_FILES[@]}"
+    log_verbose "  Nix files: ${#FOUND_NIX_FILES[@]}"
+    log_verbose "  Zig files: ${#FOUND_ZIG_FILES[@]}"
+    log_verbose "  Rust files: ${#FOUND_RUST_FILES[@]}"
+    log_verbose "  SQL files: ${#FOUND_SQL_FILES[@]}"
+    log_verbose "  YAML files: ${#FOUND_YAML_FILES[@]}"
+    log_verbose "  JSON files: ${#FOUND_JSON_FILES[@]}"
+    log_verbose "  TOML files: ${#FOUND_TOML_FILES[@]}"
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE="true"
+            shift
+            ;;
+        -n|--dry-run)
+            DRY_RUN="true"
+            shift
+            ;;
+        -c|--continue)
+            CONTINUE_ON_ERROR="true"
+            shift
+            ;;
+        -s|--stop-on-error)
+            CONTINUE_ON_ERROR="false"
+            shift
+            ;;
+        --check)
+            CHECK_ONLY="true"
+            shift
+            ;;
+        --config-dir)
+            CONFIG_DIR="$2"
+            shift 2
+            ;;
+        --disable-all)
+            ENABLE_GO="false"
+            ENABLE_JS_TS="false"
+            ENABLE_PYTHON="false"
+            ENABLE_ISORT="false"
+            ENABLE_SHELL="false"
+            ENABLE_NIX="false"
+            ENABLE_ZIG="false"
+            ENABLE_RUST="false"
+            ENABLE_SQL="false"
+            ENABLE_JSON="false"
+            ENABLE_YAML="false"
+            ENABLE_TOML="false"
+            ENABLE_PRETTIER="false"
+            shift
+            ;;
+        --disable-go) ENABLE_GO="false"; shift ;;
+        --disable-js-ts) ENABLE_JS_TS="false"; shift ;;
+        --disable-python) ENABLE_PYTHON="false"; shift ;;
+        --disable-isort) ENABLE_ISORT="false"; shift ;;
+        --disable-shell) ENABLE_SHELL="false"; shift ;;
+        --disable-nix) ENABLE_NIX="false"; shift ;;
+        --disable-zig) ENABLE_ZIG="false"; shift ;;
+        --disable-rust) ENABLE_RUST="false"; shift ;;
+        --disable-sql) ENABLE_SQL="false"; shift ;;
+        --disable-json) ENABLE_JSON="false"; shift ;;
+        --disable-yaml) ENABLE_YAML="false"; shift ;;
+        --disable-toml) ENABLE_TOML="false"; shift ;;
+        --disable-prettier) ENABLE_PRETTIER="false"; shift ;;
+        --enable-go) ENABLE_GO="true"; shift ;;
+        --enable-js-ts) ENABLE_JS_TS="true"; shift ;;
+        --enable-python) ENABLE_PYTHON="true"; shift ;;
+        --enable-isort) ENABLE_ISORT="true"; shift ;;
+        --enable-shell) ENABLE_SHELL="true"; shift ;;
+        --enable-nix) ENABLE_NIX="true"; shift ;;
+        --enable-zig) ENABLE_ZIG="true"; shift ;;
+        --enable-rust) ENABLE_RUST="true"; shift ;;
+        --enable-sql) ENABLE_SQL="true"; shift ;;
+        --enable-json) ENABLE_JSON="true"; shift ;;
+        --enable-yaml) ENABLE_YAML="true"; shift ;;
+        --enable-toml) ENABLE_TOML="true"; shift ;;
+        --enable-prettier) ENABLE_PRETTIER="true"; shift ;;
+        -*)
+            log_error "Unknown option: $1"
+            echo "Use -h or --help for usage information." >&2
+            exit 2
+            ;;
+        *)
+            TARGET_FILES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Display configuration if verbose
+if [[ "$VERBOSE" == "true" ]]; then
+    log_verbose "Configuration:"
+    log_verbose "  Config directory: $CONFIG_DIR"
+    log_verbose "  Dry run: $DRY_RUN"
+    log_verbose "  Check only: $CHECK_ONLY"
+    log_verbose "  Continue on error: $CONTINUE_ON_ERROR"
+    log_verbose "  Target files: ${#TARGET_FILES[@]}"
+fi
+
+# Discover files
+discover_files
+filter_target_files
+
+log_info "Starting format process..."
+
+# Go formatting
+if [[ "$ENABLE_GO" == "true" ]]; then
+    if [[ ${#FOUND_GO_FILES[@]} -gt 0 ]]; then
+        if command -v goimports >/dev/null 2>&1; then
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Go Import Formatting" "goimports -w ${FOUND_GO_FILES[*]}"
+            else
+                execute_formatter "Go Import Formatting" "goimports -w ."
+            fi
+        else
+            skip_formatter "Go Import Formatting" "goimports command not available"
+        fi
+        
+        if command -v gofmt >/dev/null 2>&1; then
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Go Code Formatting" "gofmt -s -w ${FOUND_GO_FILES[*]}"
+            else
+                execute_formatter "Go Code Formatting" "gofmt -s -w ."
+            fi
+        else
+            skip_formatter "Go Code Formatting" "gofmt command not available"
+        fi
+        
+        # Run golangci-lint --fix if available
+        if command -v golangci-lint >/dev/null 2>&1; then
+            local go_config=""
+            if [[ -f "$CONFIG_DIR/.golangci.yml" ]]; then
+                go_config="--config \"$CONFIG_DIR/.golangci.yml\""
+            fi
+            execute_formatter "Go Auto-fix" "golangci-lint run --fix $go_config"
+        else
+            skip_formatter "Go Auto-fix" "golangci-lint command not available"
+        fi
+    else
+        skip_formatter "Go Formatting" "no Go files found"
+    fi
+else
+    skip_formatter "Go Formatting" "disabled"
+fi
+
+# Python formatting (black)
+if [[ "$ENABLE_PYTHON" == "true" ]]; then
+    if [[ ${#FOUND_PYTHON_FILES[@]} -gt 0 ]]; then
+        if command -v black >/dev/null 2>&1; then
+            local black_args=""
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                black_args="--check --diff"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Python Formatting (black)" "black $black_args ${FOUND_PYTHON_FILES[*]}"
+            else
+                execute_formatter "Python Formatting (black)" "black $black_args ."
+            fi
+        else
+            skip_formatter "Python Formatting (black)" "black command not available"
+        fi
+    else
+        skip_formatter "Python Formatting (black)" "no Python files found"
+    fi
+else
+    skip_formatter "Python Formatting (black)" "disabled"
+fi
+
+# Python import sorting (isort)
+if [[ "$ENABLE_ISORT" == "true" ]]; then
+    if [[ ${#FOUND_PYTHON_FILES[@]} -gt 0 ]]; then
+        if command -v isort >/dev/null 2>&1; then
+            local isort_args=""
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                isort_args="--check-only --diff"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Python Import Sorting (isort)" "isort $isort_args ${FOUND_PYTHON_FILES[*]}"
+            else
+                execute_formatter "Python Import Sorting (isort)" "isort $isort_args ."
+            fi
+        else
+            skip_formatter "Python Import Sorting (isort)" "isort command not available"
+        fi
+    else
+        skip_formatter "Python Import Sorting (isort)" "no Python files found"
+    fi
+else
+    skip_formatter "Python Import Sorting (isort)" "disabled"
+fi
+
+# Shell script formatting
+if [[ "$ENABLE_SHELL" == "true" ]]; then
+    if [[ ${#FOUND_SHELL_FILES[@]} -gt 0 ]]; then
+        if command -v shfmt >/dev/null 2>&1; then
+            local shfmt_args="-w"
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                shfmt_args="-d"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Shell Script Formatting" "shfmt $shfmt_args ${FOUND_SHELL_FILES[*]}"
+            else
+                execute_formatter "Shell Script Formatting" "find . -name '*.sh' -type f -exec shfmt $shfmt_args {} +"
+            fi
+        else
+            skip_formatter "Shell Script Formatting" "shfmt command not available"
+        fi
+    else
+        skip_formatter "Shell Script Formatting" "no shell scripts found"
+    fi
+else
+    skip_formatter "Shell Script Formatting" "disabled"
+fi
+
+# Nix file formatting
+if [[ "$ENABLE_NIX" == "true" ]]; then
+    if [[ ${#FOUND_NIX_FILES[@]} -gt 0 ]]; then
+        if command -v nixfmt >/dev/null 2>&1; then
+            local nixfmt_args=""
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                nixfmt_args="--check"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Nix Formatting" "nixfmt $nixfmt_args ${FOUND_NIX_FILES[*]}"
+            else
+                execute_formatter "Nix Formatting" "nixfmt-tree $nixfmt_args ."
+            fi
+        else
+            skip_formatter "Nix Formatting" "nixfmt command not available"
+        fi
+    else
+        skip_formatter "Nix Formatting" "no Nix files found"
+    fi
+else
+    skip_formatter "Nix Formatting" "disabled"
+fi
+
+# Zig formatting
+if [[ "$ENABLE_ZIG" == "true" ]]; then
+    if [[ ${#FOUND_ZIG_FILES[@]} -gt 0 ]]; then
+        if command -v zig >/dev/null 2>&1; then
+            local zig_args="fmt"
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                zig_args="fmt --check"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Zig Formatting" "zig $zig_args ${FOUND_ZIG_FILES[*]}"
+            else
+                execute_formatter "Zig Formatting" "find . -name '*.zig' -type f -exec zig $zig_args {} +"
+            fi
+        else
+            skip_formatter "Zig Formatting" "zig command not available"
+        fi
+    else
+        skip_formatter "Zig Formatting" "no Zig files found"
+    fi
+else
+    skip_formatter "Zig Formatting" "disabled"
+fi
+
+# Rust formatting
+if [[ "$ENABLE_RUST" == "true" ]]; then
+    if [[ ${#FOUND_RUST_FILES[@]} -gt 0 ]]; then
+        if command -v rustfmt >/dev/null 2>&1; then
+            local rustfmt_args=""
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                rustfmt_args="--check"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "Rust Formatting" "rustfmt $rustfmt_args ${FOUND_RUST_FILES[*]}"
+            else
+                execute_formatter "Rust Formatting" "find . -name '*.rs' -not -path '*/target/*' -type f -exec rustfmt $rustfmt_args {} +"
+            fi
+        else
+            skip_formatter "Rust Formatting" "rustfmt command not available"
+        fi
+    else
+        skip_formatter "Rust Formatting" "no Rust files found"
+    fi
+else
+    skip_formatter "Rust Formatting" "disabled"
+fi
+
+# SQL formatting
+if [[ "$ENABLE_SQL" == "true" ]]; then
+    if [[ ${#FOUND_SQL_FILES[@]} -gt 0 ]]; then
+        if command -v sqlfluff >/dev/null 2>&1; then
+            local sqlfluff_config=""
+            if [[ -f "$CONFIG_DIR/.sqlfluff" ]]; then
+                sqlfluff_config="--config \"$CONFIG_DIR/.sqlfluff\""
+            fi
+            
+            local sql_targets=""
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                sql_targets="${FOUND_SQL_FILES[*]}"
+            else
+                sql_targets="."
+            fi
+            
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                execute_formatter "SQL Format Check" "sqlfluff lint $sqlfluff_config $sql_targets"
+            else
+                execute_formatter "SQL Formatting" "sqlfluff fix $sqlfluff_config $sql_targets"
+            fi
+        else
+            skip_formatter "SQL Formatting" "sqlfluff command not available"
+        fi
+    else
+        skip_formatter "SQL Formatting" "no SQL files found"
+    fi
+else
+    skip_formatter "SQL Formatting" "disabled"
+fi
+
+# JSON formatting
+if [[ "$ENABLE_JSON" == "true" ]]; then
+    if [[ ${#FOUND_JSON_FILES[@]} -gt 0 ]]; then
+        if command -v jq >/dev/null 2>&1; then
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                    execute_formatter "JSON Format Check" "printf '%s\\n' ${FOUND_JSON_FILES[*]} | xargs -I {} jq empty {}"
+                else
+                    execute_formatter "JSON Format Check" "find . -name '*.json' -not -path '*/node_modules/*' -not -path '*/.git/*' -exec jq empty {} +"
+                fi
+            else
+                if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                    execute_formatter "JSON Formatting" "printf '%s\\n' ${FOUND_JSON_FILES[*]} | xargs -I {} sh -c 'jq . {} > {}.tmp && mv {}.tmp {}'"
+                else
+                    execute_formatter "JSON Formatting" "find . -name '*.json' -not -path '*/node_modules/*' -not -path '*/.git/*' -exec sh -c 'jq . \"\$1\" > \"\$1.tmp\" && mv \"\$1.tmp\" \"\$1\"' _ {} +"
+                fi
+            fi
+        else
+            skip_formatter "JSON Formatting" "jq command not available"
+        fi
+    else
+        skip_formatter "JSON Formatting" "no JSON files found"
+    fi
+else
+    skip_formatter "JSON Formatting" "disabled"
+fi
+
+# TOML formatting
+if [[ "$ENABLE_TOML" == "true" ]]; then
+    if [[ ${#FOUND_TOML_FILES[@]} -gt 0 ]]; then
+        if command -v taplo >/dev/null 2>&1; then
+            local taplo_args="format"
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                taplo_args="format --check"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                execute_formatter "TOML Formatting" "taplo $taplo_args ${FOUND_TOML_FILES[*]}"
+            else
+                execute_formatter "TOML Formatting" "taplo $taplo_args *.toml"
+            fi
+        else
+            skip_formatter "TOML Formatting" "taplo command not available"
+        fi
+    else
+        skip_formatter "TOML Formatting" "no TOML files found"
+    fi
+else
+    skip_formatter "TOML Formatting" "disabled"
+fi
+
+# Prettier formatting (for multiple file types)
+if [[ "$ENABLE_PRETTIER" == "true" ]]; then
+    local prettier_files=()
+    prettier_files+=("${FOUND_JS_TS_FILES[@]}")
+    prettier_files+=("${FOUND_JSON_FILES[@]}")
+    prettier_files+=("${FOUND_YAML_FILES[@]}")
+    
+    if [[ ${#prettier_files[@]} -gt 0 ]]; then
+        if command -v prettier >/dev/null 2>&1; then
+            local prettier_config=""
+            if [[ -f "$CONFIG_DIR/.prettierrc.yaml" ]]; then
+                prettier_config="--config \"$CONFIG_DIR/.prettierrc.yaml\""
+            fi
+            
+            local prettier_args="--write"
+            if [[ "$CHECK_ONLY" == "true" ]]; then
+                prettier_args="--check"
+            fi
+            
+            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
+                # Filter prettier files to only include target files
+                local filtered_prettier=()
+                for file in "${prettier_files[@]}"; do
+                    for target in "${TARGET_FILES[@]}"; do
+                        if [[ "$file" == "$target" ]] || [[ "$(realpath "$file" 2>/dev/null || echo "$file")" == "$(realpath "$target" 2>/dev/null || echo "$target")" ]]; then
+                            filtered_prettier+=("$file")
+                            break
+                        fi
+                    done
+                done
+                if [[ ${#filtered_prettier[@]} -gt 0 ]]; then
+                    execute_formatter "Prettier Formatting" "prettier $prettier_args $prettier_config ${filtered_prettier[*]}"
+                else
+                    skip_formatter "Prettier Formatting" "no matching target files"
+                fi
+            else
+                execute_formatter "Prettier Formatting" "prettier $prettier_args $prettier_config --ignore-path '$CONFIG_DIR/.prettierignore' ."
+            fi
+        else
+            skip_formatter "Prettier Formatting" "prettier command not available"
+        fi
+    else
+        skip_formatter "Prettier Formatting" "no supported files found (JS/TS/JSON/YAML)"
+    fi
+else
+    skip_formatter "Prettier Formatting" "disabled"
+fi
+
+# Print summary
+log_info "Format process completed"
+log_info "Summary:"
+log_info "  Formatters run: $RUN_COUNT"
+log_info "  Successful: $SUCCESS_COUNT"
+log_info "  Failed: $ERROR_COUNT"
+log_info "  Skipped: $SKIP_COUNT"
+
+if [[ $DRY_RUN == "true" ]]; then
+    log_info "This was a dry run - no actual formatting was performed"
+fi
+
+if [[ $CHECK_ONLY == "true" ]]; then
+    log_info "This was a format check - no files were modified"
+fi
+
+# Exit with appropriate code
+if [[ $ERROR_COUNT -gt 0 ]]; then
+    exit 1
+else
+    exit 0
+fi

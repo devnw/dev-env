@@ -1,0 +1,89 @@
+name: Push to Cachix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Makefile'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'scripts.nix'
+      - 'scripts/**'
+      - '.github/workflows/push-cachix.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  deployments: write
+  packages: write
+  pages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push-to-cachix:
+    name: 'Build and Push All Packages'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+        with:
+          upstream-cache: https://oss-devnw.cachix.org
+      - uses: DeterminateSystems/flake-checker-action@main
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v16
+        with:
+          name: oss-devnw 
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build and Push All Packages
+        run: |
+          echo "🚀 Building and pushing all packages to Cachix..."
+          make push-cachix
+
+      - name: Create Push Summary
+        run: |
+          echo "## 📦 Cachix Push Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status**: ✅ Successfully pushed all packages to Cachix" >> $GITHUB_STEP_SUMMARY
+          echo "**Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Packages Pushed:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Package Sets" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ commonPackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ goPackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ terraformPackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ ansiblePackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ nixPackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ uiPackages" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ zigPackages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Individual Scripts" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ cex (Curl and Execute)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ fmt (Code Formatter)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ lint (Code Linter)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ tidy (Code Organizer)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ upgrade (Dependency Upgrader)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ fuzz (Fuzzing Test Runner)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ fuzz-go (Go Fuzzing Script)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ license (License Manager)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ tag (Version Tagger)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Usage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All packages are now available in the binary cache for faster builds:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Use cached builds automatically" >> $GITHUB_STEP_SUMMARY
+          echo "nix develop" >> $GITHUB_STEP_SUMMARY
+          echo "nix build .#cex" >> $GITHUB_STEP_SUMMARY
+          echo "nix shell github:devnw/flakes#fmt" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Get the configuration directory from environment variable or fall back to relative path
+CONFIG_DIR="${CEX_CONFIG_DIR:-./shared}"
+
+# Function to display informational messages to stderr
+function info {
+    echo -e "\e[32m[INFO]\e[0m $1" >&2
+}
+
+# Function to display error messages to stderr and exit
+function error {
+    echo -e "\e[31m[ERROR]\e[0m $1" >&2
+    exit 1
+}
+
+# Function to display warning messages to stderr
+function warn {
+    echo -e "\e[33m[WARN]\e[0m $1" >&2
+}
+
+# Function to display help message
+function show_help {
+    cat << EOF
+cex - Curl and Execute scripts from shared repository
+
+USAGE:
+    $0 [OPTIONS] [SCRIPT_PATH]
+
+ARGUMENTS:
+    SCRIPT_PATH    Path to script relative to scripts/ directory (default: upgrade.sh)
+                   Examples: fmt.sh, lint.sh, tidy.sh, upgrade.sh
+
+OPTIONS:
+    -r, --remote HOST    Execute script on remote host via SSH
+    -u, --url URL        Override base URL for shared files
+    -l, --list           List available scripts
+    -d, --dry-run        Show what would be executed without running it
+    -h, --help           Show this help message
+
+ENVIRONMENT VARIABLES:
+    SHARED_FILES_URL     Base URL for shared files (default: https://raw.githubusercontent.com/devnw/flakes/refs/heads/main)
+
+EXAMPLES:
+    $0                   # Execute upgrade.sh (default)
+    $0 fmt.sh            # Execute fmt.sh
+    $0 -r server fmt.sh  # Execute fmt.sh on remote server via SSH
+    $0 -d lint.sh        # Dry run - show what would be executed
+    $0 -l                # List available scripts
+
+EOF
+}
+
+# Function to list available scripts
+function list_scripts {
+    info "Available scripts:"
+    local scripts=(
+        "fmt.sh - Format code files (Go, JS/TS, Python, Shell, Nix)"
+        "lint.sh - Lint code files (Go, JS/TS, Python, Shell, Nix)"
+        "tidy.sh - Clean up and organize code"
+        "upgrade.sh - Upgrade dependencies and tools"
+        "fuzz.sh - Run fuzzing tests"
+        "tag.py - Manage version tags"
+        "license.py - Manage license headers"
+    )
+    
+    for script in "${scripts[@]}"; do
+        echo "  $script"
+    done
+}
+
+# Function to execute script
+function execute_script {
+    local script_path="$1"
+    local remote_host="${2:-}"
+    local dry_run="${3:-false}"
+    
+    local full_url="$SHARED_FILES_URL/scripts/$script_path"
+    
+    if [[ "$dry_run" == "true" ]]; then
+        info "Would execute: curl -fsSL '$full_url'"
+        if [[ -n "$remote_host" ]]; then
+            info "On remote host: $remote_host"
+            echo "ssh '$remote_host' \"curl -fsSL '$full_url' | bash\""
+        else
+            echo "curl -fsSL '$full_url' | bash"
+        fi
+        return 0
+    fi
+    
+    info "Executing script: $script_path"
+    info "From URL: $full_url"
+    
+    if [[ -n "$remote_host" ]]; then
+        info "Executing on remote host: $remote_host"
+        if ! ssh "$remote_host" "curl -fsSL '$full_url' | bash"; then
+            error "Failed to execute script on remote host: $remote_host"
+        fi
+    else
+        if ! curl -fsSL "$full_url" | bash; then
+            error "Failed to execute script: $script_path"
+        fi
+    fi
+    
+    info "Script execution completed successfully"
+}
+
+# Variables
+SHARED_FILES_URL=${SHARED_FILES_URL:-https://raw.githubusercontent.com/devnw/flakes/refs/heads/main}
+REMOTE_HOST=""
+SCRIPT_PATH="upgrade.sh"
+DRY_RUN=false
+LIST_SCRIPTS=false
+
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -r|--remote)
+            if [[ $# -lt 2 ]]; then
+                error "Option -r|--remote requires a hostname argument"
+            fi
+            REMOTE_HOST="$2"
+            shift 2
+            ;;
+        -u|--url)
+            if [[ $# -lt 2 ]]; then
+                error "Option -u|--url requires a URL argument"
+            fi
+            SHARED_FILES_URL="$2"
+            shift 2
+            ;;
+        -d|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -l|--list)
+            LIST_SCRIPTS=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            warn "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+        *)
+            # First positional argument is script path
+            SCRIPT_PATH="$1"
+            shift
+            ;;
+    esac
+done
+
+# Validate script path
+if [[ "$SCRIPT_PATH" == *"/"* ]] && [[ "$SCRIPT_PATH" != scripts/* ]]; then
+    warn "Script path should be relative to scripts/ directory"
+    warn "Removing leading path components..."
+    SCRIPT_PATH=$(basename "$SCRIPT_PATH")
+fi
+
+# Handle list scripts option
+if [[ "$LIST_SCRIPTS" == "true" ]]; then
+    list_scripts
+    exit 0
+fi
+
+# Validate remote host if SSH is required
+if [[ -n "$REMOTE_HOST" ]]; then
+    if ! command -v ssh >/dev/null 2>&1; then
+        error "SSH is required for remote execution but is not installed"
+    fi
+    info "Remote execution will be performed on: $REMOTE_HOST"
+fi
+
+# Execute the script
+execute_script "$SCRIPT_PATH" "$REMOTE_HOST" "$DRY_RUN"

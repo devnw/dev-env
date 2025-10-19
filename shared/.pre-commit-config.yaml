@@ -1,0 +1,205 @@
+# .pre-commit-config.yaml
+minimum_pre_commit_version: '3.7.0'
+
+# Install multiple hook types when you run `pre-commit install`.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+
+# Fail fast during local commit; show everything at pre-push.
+fail_fast: true
+
+# Run hooks only on source content, not build artifacts.
+files: ''
+exclude: |
+  (?x)^(
+    public/|resources/_gen/|node_modules/|vendor/|
+    dist/|build/|.cache/|.git/|.idea/|.vscode/|
+    themes/.*/exampleSite/|.hugo_build.lock
+  )
+
+# Prefer pinned language versions where relevant.
+default_language_version:
+  python: python3
+
+repos:
+  # ── License header enforcement ─────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: license
+        name: add license headers
+        entry: license
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # ── Meta checks about this pre-commit config ────────────────────────────────
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+
+  # ── Makefile style/lint (your existing) ─────────────────────────────────────
+  - repo: https://github.com/mrtazz/checkmake.git
+    rev: 0.2.2
+    hooks:
+      - id: checkmake
+        exclude: ^templates/
+        files: (?i)^Makefile(\..+)?$
+
+  # ── Core generic hygiene ────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: end-of-file-fixer
+      - id: check-yaml
+        types_or: [yaml]
+        # Skip Hugo theme example sites which often ship invalid samples
+        exclude: ^themes/.*/exampleSite/
+      - id: check-json
+        types_or: [json]
+
+  # ── Markdown / content (Hugo) ──────────────────────────────────────────────
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.14.0
+    hooks:
+      - id: markdownlint-cli2
+        types_or: [markdown]
+        additional_dependencies: ['markdownlint:DCO']
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.21
+    hooks:
+      - id: mdformat
+        types_or: [markdown]
+        args: [--number]
+        additional_dependencies:
+          - mdformat-gfm
+          - mdformat-frontmatter
+
+  # ── Shell ──────────────────────────────────────────────────────────────────
+  - repo: https://github.com/koalaman/shellcheck
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        types_or: [shell]
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.11.0-4
+    hooks:
+      - id: shfmt
+        types_or: [shell]
+        args: ['-i', '2', '-ci']
+
+  # ── GitHub Actions (actionlint) ────────────────────────────────────────────
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.5
+    hooks:
+      - id: actionlint
+        files: ^\.github/workflows/.*\.ya?ml$
+
+  # ── Dockerfiles ────────────────────────────────────────────────────────────
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint
+        files: (^|/)Dockerfile(\..+)?$
+
+  # ── Secrets (fast blocklist + entropy) ─────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        args: ['detect', '--no-git', '--redact']
+        stages: [pre-commit, pre-push]
+
+  # ── Go toolchain (format, imports, lint) ───────────────────────────────────
+  - repo: https://github.com/mvdan/gofumpt
+    rev: v0.6.0
+    hooks:
+      - id: gofumpt
+        types_or: [go]
+  - repo: https://github.com/incu6us/goimports-reviser
+    rev: v3.6.6
+    hooks:
+      - id: goimports-reviser
+        types_or: [go]
+        args: ['-rm-unused', '-format', '-set-alias']
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.60.3
+    hooks:
+      - id: golangci-lint
+        types_or: [go]
+        stages: [pre-push] # heavier
+
+  # ── Zig ────────────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: zig-fmt
+        name: zig fmt
+        language: system
+        entry: bash -c 'zig fmt "$@"'
+        types_or: [zig]
+      # zls formatting is still evolving; keep it simple with zig fmt.
+
+  # ── Python (only if present) ───────────────────────────────────────────────
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        types_or: [python]
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        types_or: [python]
+        args: ['--fix']
+
+  # ── Commit policies (Commitizen) ───────────────────────────────────────────
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.8.3
+    hooks:
+      # validate commit messages
+      - id: commitizen
+        stages: [commit-msg]
+      # enforce branch naming on push
+      - id: commitizen-branch
+        stages: [pre-push]
+
+  # ── EditorConfig enforcement (keeps whitespace sane) ───────────────────────
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 3.2.0
+    hooks:
+      - id: editorconfig-checker
+        alias: ec
+        stages: [pre-commit]
+
+  # ── (Optional) Keep your original local tasks, but scope them ──────────────
+  - repo: local
+    hooks:
+      - id: tidy
+        name: repo tidy (manual)
+        entry: bash
+        args: [tidy]
+        language: system
+        pass_filenames: false
+        stages: [manual]
+      - id: upgrade
+        name: upgrade dependencies (manual)
+        entry: bash
+        args: [upgrade]
+        language: system
+        pass_filenames: false
+        stages: [manual]
+      - id: fmt
+        name: project fmt
+        entry: bash
+        args: [fmt]
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: lint
+        name: project lint (push)
+        entry: bash
+        args: [lint]
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

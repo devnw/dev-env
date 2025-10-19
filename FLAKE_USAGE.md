@@ -67,29 +67,37 @@ All dev-env inputs support `follows`:
 - **`gomod2nix`** - Go module tooling (auto-follows nixpkgs)
 - **`canary`** - Optional devnw canary tools (auto-follows nixpkgs)
 
-### Example: Override All Inputs
+### Important: Don't Override `unstable` with Stable
 
+**WARNING**: Do NOT make the `unstable` input follow your stable `nixpkgs`! This will prevent you from getting the latest versions of Go, Zig, and other tools.
+
+**❌ WRONG - Don't do this:**
 ```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+dev-env.inputs.unstable.follows = "nixpkgs";  # This makes unstable use stable packages!
+```
 
-    dev-env = {
-      url = "github:devnw/dev-env";
-      inputs = {
-        # Use your nixpkgs for both stable and unstable
-        nixpkgs.follows = "nixpkgs";
-        unstable.follows = "nixpkgs";
+**✅ CORRECT - Do one of these:**
+```nix
+# Option 1: Don't override unstable at all (recommended)
+dev-env = {
+  url = "github:devnw/dev-env";
+  inputs.nixpkgs.follows = "nixpkgs";  # Only override stable nixpkgs
+  # unstable will use dev-env's own unstable channel
+};
 
-        # Share flake-utils if you already use it
-        flake-utils.follows = "flake-utils";
+# Option 2: Provide your own unstable channel
+inputs = {
+  nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+  nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-        # gomod2nix and canary will automatically follow nixpkgs
-        # since they're configured to follow dev-env's nixpkgs
-      };
+  dev-env = {
+    url = "github:devnw/dev-env";
+    inputs = {
+      nixpkgs.follows = "nixpkgs";
+      unstable.follows = "nixpkgs-unstable";  # Use YOUR unstable
     };
   };
-}
+};
 ```
 
 ## Using the Overlay
@@ -200,6 +208,15 @@ evaluation warning: darwin.apple_sdk_11_0.callPackage: deprecated and will be re
 ```
 
 This is a known nixpkgs internal warning from transitive dependencies (like docker-credential-helpers). It's not an error and doesn't affect functionality. The warning will be resolved when upgrading to nixpkgs 25.11 or later. You can safely ignore it for now.
+
+### Zig Version Compatibility
+
+The flake automatically selects the best available Zig version from your nixpkgs-unstable:
+- Prefers `zig_0_15` if available
+- Falls back to `zig_0_14`, `zig_0_13`, or the latest `zig` package
+- ZLS (Zig Language Server) and zig-zlint are optional and gracefully excluded if not available
+
+This ensures the flake works across different versions of nixpkgs-unstable without errors. If you need a specific Zig version, you can override the `unstable` input in your parent flake to point to a nixpkgs version that includes your desired Zig version.
 
 ### gomod2nix Conflicts
 

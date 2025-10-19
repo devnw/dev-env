@@ -53,6 +53,28 @@
           config.allowUnfree = true;
         };
 
+        # Detect if unstable and stable are the same (common mistake)
+        # Compare the narHash of the flake inputs
+        unstableIsSameAsStable = nixpkgs.sourceInfo.narHash or null == unstable.sourceInfo.narHash or null;
+
+        # Issue a warning if unstable is the same as stable
+        _ =
+          if unstableIsSameAsStable && unstable.sourceInfo ? narHash then
+            builtins.trace ''
+              WARNING: Your 'unstable' input points to the same nixpkgs as 'nixpkgs' (stable).
+              This means you won't get the latest versions of Go, Zig, and other unstable packages.
+
+              To fix this:
+              1. Don't override the 'unstable' input (recommended), OR
+              2. Make 'unstable' follow a proper nixpkgs-unstable channel:
+
+                 inputs.dev-env.inputs.unstable.follows = "nixpkgs-unstable";
+
+              See FLAKE_USAGE.md for more information.
+            '' null
+          else
+            null;
+
         # --- merge a handful of unstable packages into the stable set ---------
         pkgs = pkgs-stable.extend (
           final: prev: {
@@ -288,18 +310,44 @@
 
         zigPkgs =
           let
-            zigPkg = pkgs-unstable.zig_0_15;
-            zlsPkg = pkgs-unstable.zls_0_15;
+            # Select the latest available Zig version with fallback
+            # Prefer zig_0_15, then zig_0_14, then zig_0_13, finally just zig
+            zigPkg =
+              if pkgs-unstable ? zig_0_15 then
+                pkgs-unstable.zig_0_15
+              else if pkgs-unstable ? zig_0_14 then
+                pkgs-unstable.zig_0_14
+              else if pkgs-unstable ? zig_0_13 then
+                pkgs-unstable.zig_0_13
+              else
+                pkgs-unstable.zig;
+
+            # Select matching ZLS (Zig Language Server) version
+            zlsPkg =
+              if pkgs-unstable ? zls_0_15 then
+                pkgs-unstable.zls_0_15
+              else if pkgs-unstable ? zls_0_14 then
+                pkgs-unstable.zls_0_14
+              else if pkgs-unstable ? zls_0_13 then
+                pkgs-unstable.zls_0_13
+              else if pkgs-unstable ? zls then
+                pkgs-unstable.zls
+              else
+                null; # ZLS is optional
+
+            # Only include zig-zlint if available (may not exist in all nixpkgs versions)
+            optionalZigLint = pkgs.lib.optional (pkgs-unstable ? zig-zlint) pkgs-unstable.zig-zlint;
           in
           [
             zigPkg
             pkgs-unstable.zig-shell-completions
             pkgs-unstable.minizign
-            zlsPkg
             pkgs-unstable.ztags
             pkgs-unstable.vscode-extensions.ziglang.vscode-zig
             pkgs-unstable.vimPlugins.zig-vim
-          ];
+          ]
+          ++ pkgs.lib.optionals (zlsPkg != null) [ zlsPkg ]
+          ++ optionalZigLint;
       in
       {
         # -------------------- exported packages (must be derivations) ----------

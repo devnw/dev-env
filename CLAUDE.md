@@ -158,10 +158,20 @@ The `license` script now handles missing LICENSE files gracefully:
 
 This flake fully supports the `follows` mechanism for dependency management. See [FLAKE_USAGE.md](./FLAKE_USAGE.md) for:
 - How to use `follows` to control nixpkgs versions from parent flakes
+- **IMPORTANT**: How to avoid making `unstable` follow stable `nixpkgs` (common mistake!)
 - Using the overlay for custom package sets
 - Available development shells and packages
 - Troubleshooting common issues
 
+**Quick Tip**: When using this flake, either don't override the `unstable` input at all, or make it follow an actual unstable channel. The flake will warn you if it detects this misconfiguration.
+
 ### Known Issues
 
 **Darwin SDK Deprecation Warning**: On macOS, you may see a warning about `darwin.apple_sdk_11_0.callPackage` being deprecated. This is a nixpkgs internal warning from transitive dependencies and can be safely ignored. It will be resolved when upgrading to nixpkgs 25.11+.
+
+### Version Compatibility
+
+**Zig Versions**: The flake automatically selects the best available Zig version from nixpkgs-unstable with fallback support:
+- Prefers zig_0_15, falls back to zig_0_14, zig_0_13, or latest zig
+- ZLS (Zig Language Server) and zig-zlint are optional components
+- Works across different nixpkgs-unstable versions without version pinning errors

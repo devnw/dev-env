@@ -691,25 +691,6 @@ else
     skip_linter "Advanced Nix Linting (statix)" "disabled"
 fi
 
-# Zig linting
-if [[ "$ENABLE_ZIG" == "true" ]]; then
-    if [[ ${#FOUND_ZIG_FILES[@]} -gt 0 ]]; then
-        if command -v zlint >/dev/null 2>&1; then
-            if [[ ${#TARGET_FILES[@]} -gt 0 ]]; then
-                execute_linter "Zig Linting" "zlint ${FOUND_ZIG_FILES[*]}"
-            else
-                execute_linter "Zig Linting" "find . -name '*.zig' -type f -exec zlint {} +"
-            fi
-        else
-            skip_linter "Zig Linting" "zlint command not available"
-        fi
-    else
-        skip_linter "Zig Linting" "no Zig files found"
-    fi
-else
-    skip_linter "Zig Linting" "disabled"
-fi
-
 # SQL linting and fixing
 if [[ "$ENABLE_SQL" == "true" ]]; then
     if [[ ${#FOUND_SQL_FILES[@]} -gt 0 ]]; then

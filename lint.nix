@@ -39,7 +39,6 @@ pkgs.stdenvNoCC.mkDerivation {
     statix
     sqlfluff
     squawk
-    zig-zlint
     jq
     yq-go
     redocly
@@ -110,7 +109,6 @@ pkgs.stdenvNoCC.mkDerivation {
               pkgs.sqlfluff
               pkgs.squawk
               pkgs.postgresql
-              pkgs.zig-zlint
               pkgs.jq
               pkgs.yq-go
               pkgs.redocly

@@ -66,7 +66,6 @@
               goreleaser
               go-licenses
               zig
-              zig-zlint
               ;
 
             python = pkgs-unstable.python3.withPackages (
@@ -300,7 +299,6 @@
             pkgs-unstable.ztags
             pkgs-unstable.vscode-extensions.ziglang.vscode-zig
             pkgs-unstable.vimPlugins.zig-vim
-            pkgs-unstable.zig-zlint
           ];
       in
       {

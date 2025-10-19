@@ -177,20 +177,29 @@ dev-env.packages.${system}.uiPackages        # UI testing tools
 
 ### Canary Input Not Available
 
-If the canary repository is not accessible (private or doesn't exist):
+The canary input is optional and gracefully degrades if not available. If the canary flake doesn't export the expected packages, the flake will use an empty list and continue working normally.
+
+If you want to completely override it:
 
 ```nix
 dev-env = {
   url = "github:devnw/dev-env";
   inputs = {
     nixpkgs.follows = "nixpkgs";
-    # Override canary with a dummy input or your own implementation
-    canary.follows = "nixpkgs";  # Will cause an error, better to omit
+    # You can override canary to point to your own flake
+    canary.url = "github:yourorg/your-canary-fork";
   };
 };
 ```
 
-Better approach - fork the flake and remove the canary dependency if not needed.
+### Darwin SDK Deprecation Warning
+
+On macOS systems, you may see a warning:
+```
+evaluation warning: darwin.apple_sdk_11_0.callPackage: deprecated and will be removed in Nixpkgs 25.11
+```
+
+This is a known nixpkgs internal warning from transitive dependencies (like docker-credential-helpers). It's not an error and doesn't affect functionality. The warning will be resolved when upgrading to nixpkgs 25.11 or later. You can safely ignore it for now.
 
 ### gomod2nix Conflicts
 

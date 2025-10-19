@@ -83,8 +83,15 @@
           }
         );
 
-        # Import canary packages (can be overridden via follows in parent flakes)
-        devnwPkgs = import canary { inherit system pkgs; };
+        # Import canary packages if available (can be overridden via follows in parent flakes)
+        # Canary is expected to export a list of packages, but we default to empty if not available
+        devnwPkgs =
+          if canary ? packages.${system} then
+            (builtins.attrValues canary.packages.${system})
+          else if canary ? defaultPackage.${system} then
+            [ canary.defaultPackage.${system} ]
+          else
+            [ ];
 
         # --- import shell scripts ---------------------------------------------
         scripts = import ./scripts.nix {

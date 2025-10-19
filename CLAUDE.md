@@ -153,3 +153,15 @@ The `license` script now handles missing LICENSE files gracefully:
 - Binary cache significantly speeds up initial setup and CI/CD
 - Scripts are designed to work with or without configuration files
 - Enhanced scripts (`fuzz`, `license`) provide production-ready capabilities with robust error handling
+
+### Using This Flake in Other Projects
+
+This flake fully supports the `follows` mechanism for dependency management. See [FLAKE_USAGE.md](./FLAKE_USAGE.md) for:
+- How to use `follows` to control nixpkgs versions from parent flakes
+- Using the overlay for custom package sets
+- Available development shells and packages
+- Troubleshooting common issues
+
+### Known Issues
+
+**Darwin SDK Deprecation Warning**: On macOS, you may see a warning about `darwin.apple_sdk_11_0.callPackage` being deprecated. This is a nixpkgs internal warning from transitive dependencies and can be safely ignored. It will be resolved when upgrading to nixpkgs 25.11+.

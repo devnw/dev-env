@@ -148,6 +148,7 @@ push-cachix: ## Push built packages to Cachix binary cache
 	nix build .#zigPackages --json | jq -r '.[].outputs.out' | cachix push oss-devnw
 	nix build .#nodePackages --json | jq -r '.[].outputs.out' | cachix push oss-devnw
 	nix build .#hugoPackages --json | jq -r '.[].outputs.out' | cachix push oss-devnw
+	nix build .#ciPackages --json | jq -r '.[].outputs.out' | cachix push oss-devnw
 	@echo "Building and pushing individual scripts..."
 	@for script in cex fmt lint tidy upgrade fuzz fuzz-go license tag; do \
 		echo "Pushing $$script..."; \

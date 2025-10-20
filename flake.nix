@@ -394,6 +394,11 @@
             paths = seoPkgs;
           };
 
+          ciPackages = pkgs.symlinkJoin {
+            name = "ci";
+            paths = ciPkgs;
+          };
+
           # Individual shell scripts
           inherit (scripts)
             cex
